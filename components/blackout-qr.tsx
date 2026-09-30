@@ -6,8 +6,10 @@ import QRCore, { type Level, type Mode, type OptimizeOptions, type Phase, type S
 import type { WorkerRequest, WorkerResponse } from "@/lib/qr.worker";
 
 type FillMode = Exclude<Mode, "standard">;
+type Goal = "dark" | "light";
 
 interface Settings {
+  goal: Goal;
   text: string;
   v: number;
   lvl: Level;
@@ -23,6 +25,7 @@ interface Chip {
 }
 
 const DEFAULTS: Settings = {
+  goal: "dark",
   text: "https://example.com/menu",
   v: 10,
   lvl: "L",
@@ -33,6 +36,10 @@ const DEFAULTS: Settings = {
 };
 const STORE_KEY = "blackout-qr-settings";
 
+const GOALS: [Goal, string, string][] = [
+  ["dark", "Dark", "most ink"],
+  ["light", "Light", "least ink"],
+];
 const LEVELS: [Level, string][] = [["L", "7%"], ["M", "15%"], ["Q", "25%"], ["H", "30%"]];
 const FILL_MODES: [FillMode, string, string][] = [
   ["hidden", "Hidden", "darkest"],
@@ -67,6 +74,7 @@ function loadSettings(): Settings | null {
     if (/^[LMQH]$/.test(saved.lvl)) s.lvl = saved.lvl;
     if (saved.budget >= 0 && saved.budget <= 1) s.budget = saved.budget;
     if (saved.mode === "hidden" || saved.mode === "fragment") s.mode = saved.mode;
+    if (saved.goal === "dark" || saved.goal === "light") s.goal = saved.goal;
     if ([4, 8, 16].includes(saved.border)) s.border = saved.border;
     if (/^#[0-9a-f]{6}$/i.test(saved.ink)) s.ink = saved.ink;
     return s;
@@ -149,10 +157,10 @@ function svgFor(snap: Snapshot, border: number, ink: string) {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${W}" width="${W * 10}" height="${W * 10}" shape-rendering="crispEdges"><rect width="${W}" height="${W}" fill="#ffffff"/><path fill="${ink}" d="${d}"/></svg>`;
 }
 
-function baseName(text: string, v: number) {
+function baseName(text: string, v: number, light: boolean) {
   const m = /^[a-z]+:\/\/([^\/?#]+)/i.exec(text.trim());
   const host = m ? m[1].replace(/[^a-z0-9.-]/gi, "") : "";
-  return "blackout-qr" + (host ? "-" + host : "") + "-v" + v;
+  return "blackout-qr" + (light ? "-light" : "") + (host ? "-" + host : "") + "-v" + v;
 }
 
 function downloadBlob(filename: string, blob: Blob) {
@@ -187,7 +195,7 @@ export default function BlackoutQR() {
   const delayRef = useRef(0);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const { text, v, lvl, budget, mode, ink, border } = settings;
+  const { goal, text, v, lvl, budget, mode, ink, border } = settings;
   const minV = useMemo(() => minVersionFor(text, lvl, mode), [text, lvl, mode]);
 
   const update = (patch: Partial<Settings>, delay?: number) => {
@@ -268,7 +276,9 @@ export default function BlackoutQR() {
       setEmpty(false);
       if (!minV) { setChip({ kind: "bad", text: "Text too long" }); showSnap(null); return; }
       setChip(SEARCHING);
-      const opts: OptimizeOptions = { text, v, lvl, mode, budget, seed: 1 + (id * 7919) % 100000, tripleMs: 400 };
+      const opts: OptimizeOptions = {
+        text, v, lvl, mode, budget, light: goal === "light", seed: 1 + (id * 7919) % 100000, tripleMs: 400,
+      };
       try {
         const worker = new Worker(new URL("../lib/qr.worker.ts", import.meta.url));
         workerRef.current = worker;
@@ -289,7 +299,7 @@ export default function BlackoutQR() {
       }
     }, delayRef.current);
     return () => clearTimeout(debounce);
-  }, [loaded, text, v, lvl, mode, budget, minV, stop, showSnap, onSnapshot, runMain]);
+  }, [loaded, goal, text, v, lvl, mode, budget, minV, stop, showSnap, onSnapshot, runMain]);
 
   useEffect(() => stop, [stop]);
 
@@ -325,13 +335,13 @@ export default function BlackoutQR() {
     if (!ver) return;
     const total = ver.n + 2 * border, scale = Math.max(8, Math.ceil(1600 / total)), c = document.createElement("canvas");
     paint(c, ver, scale, border, ink);
-    const name = baseName(text, ver.v) + ".png";
+    const name = baseName(text, ver.v, ver.light) + ".png";
     c.toBlob((blob) => { if (blob) { downloadBlob(name, blob); toast("Saved " + name); } }, "image/png");
   };
   const downloadSvg = () => {
     const ver = verifiedRef.current;
     if (!ver) return;
-    const name = baseName(text, ver.v) + ".svg";
+    const name = baseName(text, ver.v, ver.light) + ".svg";
     downloadBlob(name, new Blob([svgFor(ver, border, ink)], { type: "image/svg+xml" }));
     toast("Saved " + name);
   };
@@ -346,14 +356,16 @@ export default function BlackoutQR() {
   };
 
   // ---------- derived UI ----------
+  const light = goal === "light";
   const hasHash = text.includes("#");
   const n = 4 * v + 17;
   const per = QRCore.correctable(v, lvl, QRCore.blocksOf(v, lvl)[0].e);
   const painted = Math.round(budget * per);
+  const paints = light ? "Blanks" : "Paints";
   let budgetHint: [string, string];
-  if (painted === 0) budgetHint = ["hint", `No codewords painted. The full repair capacity (${per} per block) stays free for real damage.`];
-  else if (painted === per) budgetHint = ["hint bad", `Paints all ${per} repairable codewords in each block. No margin left: a smudge, crease or glare spot can stop it scanning.`];
-  else budgetHint = [painted / per > 0.6 ? "hint warn" : "hint", `Paints ${painted} of ${per} repairable codewords in each block. ${per - painted} stay free for real damage.`];
+  if (painted === 0) budgetHint = ["hint", `No codewords ${light ? "blanked" : "painted"}. The full repair capacity (${per} per block) stays free for real damage.`];
+  else if (painted === per) budgetHint = ["hint bad", `${paints} all ${per} repairable codewords in each block. No margin left: a smudge, crease or glare spot can stop it scanning.`];
+  else budgetHint = [painted / per > 0.6 ? "hint warn" : "hint", `${paints} ${painted} of ${per} repairable codewords in each block. ${per - painted} stay free for real damage.`];
   let modeHint = mode === "hidden"
     ? "Filler goes after the end-of-message marker, where QR readers stop reading. It scans as exactly your text."
     : "Filler becomes digits after a # at the end of your link. Fully standard, and browsers don't send the # part to the website.";
@@ -365,6 +377,24 @@ export default function BlackoutQR() {
   return (
     <main className="grid">
       <section className="controls" aria-label="Settings">
+        <div className="field">
+          <span className="label" id="goalLabel">Aim for</span>
+          <div className="seg" role="radiogroup" aria-labelledby="goalLabel">
+            {GOALS.map(([value, label, sub]) => (
+              <label key={value}>
+                <input type="radio" name="goal" value={value} checked={goal === value}
+                  onChange={() => update({ goal: value }, 0)} />
+                <span>{label}<small>{sub}</small></span>
+              </label>
+            ))}
+          </div>
+          <p className="hint">
+            {light
+              ? "Every bit the search can choose is aimed at blank paper. Finder and timing patterns always stay."
+              : "Every bit the search can choose is aimed at solid ink."}
+          </p>
+        </div>
+
         <div className="field">
           <div className="field-head">
             <label className="label" htmlFor="txt">Link or text</label>
@@ -384,7 +414,9 @@ export default function BlackoutQR() {
           </div>
           <input type="range" id="size" min={minV || 1} max={40} step={1} value={v}
             onChange={(e) => update({ v: +e.target.value }, 250)} />
-          <p className="hint">Bigger codes can carry more ink, but need a bigger print or a closer phone.</p>
+          <p className="hint">
+            Bigger codes can {light ? "go lighter" : "carry more ink"}, but need a bigger print or a closer phone.
+          </p>
         </div>
 
         <div className="field">
@@ -403,7 +435,7 @@ export default function BlackoutQR() {
 
         <div className="field">
           <div className="field-head">
-            <label className="label" htmlFor="budget">Repair budget spent on ink</label>
+            <label className="label" htmlFor="budget">Repair budget spent on {light ? "blanking" : "ink"}</label>
             <span className="value">{Math.round(budget * 100)}%</span>
           </div>
           <input type="range" id="budget" min={0} max={100} step={5} value={Math.round(budget * 100)}
@@ -484,7 +516,7 @@ export default function BlackoutQR() {
           <div className="bar"><i style={{ width: barWidth }}></i></div>
           <div className="phase">
             <span>{phase ? phase[0] : "Waiting"}</span>
-            <span>{snap ? (snap.n * snap.n - dark).toLocaleString() + " light modules left" : ""}</span>
+            <span>{snap ? (snap.light ? dark : snap.n * snap.n - dark).toLocaleString() + (snap.light ? " dark" : " light") + " modules left" : ""}</span>
           </div>
         </div>
         <div className="actions">

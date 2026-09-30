@@ -22,6 +22,8 @@ export interface Snapshot {
   v: number;
   lvl: Level;
   margin: number;
+  /** true when the search aimed for light modules */
+  light: boolean;
 }
 
 export interface OptimizeOptions {
@@ -34,6 +36,8 @@ export interface OptimizeOptions {
   seed?: number;
   tripleMs?: number;
   mask?: number;
+  /** aim for as little ink as possible instead of as much */
+  light?: boolean;
 }
 
 export interface Block {

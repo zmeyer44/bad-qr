@@ -11,8 +11,8 @@ export default function Home() {
           <h1>Blackout QR</h1>
         </div>
         <p className="lede">
-          QR codes that are mostly solid ink and still scan. Type a link, choose how hard to push it, and each
-          result is read back by a real QR decoder before you can download it.
+          QR codes that are mostly solid ink, or almost none, and still scan. Type a link, choose how hard to push
+          it, and each result is read back by a real QR decoder before you can download it.
         </p>
       </header>
 
@@ -44,6 +44,10 @@ export default function Home() {
             </p>
           </div>
         </div>
+        <p className="hint">
+          Light mode runs the same three steps in reverse: filler that the mask turns white, parity searched toward
+          white, and painted codewords left blank.
+        </p>
         <p className="hint">
           A normal QR code is about half ink. Always test a scan on the phones you care about before printing,
           especially at high repair budgets.
